@@ -24,6 +24,7 @@ type statusCmd struct {
 
 	UseServerListPing bool `usage:"indicates the legacy, server list ping should be used for pre-1.12"`
 	UseMcUtils        bool `usage:"(experimental) try using mcutils to query the server"`
+  UseMcUtilsLegacy  bool `usage:"(experimental) use mcutils with legacy (pre-1.6) SLP"`
 
 	RetryInterval time.Duration `usage:"if retry-limit is non-zero, status will be retried at this interval" default:"10s"`
 	RetryLimit    int           `usage:"if non-zero, failed status will be retried this many times before exiting"`
@@ -65,6 +66,10 @@ func (c *statusCmd) Execute(ctx context.Context, fs *flag.FlagSet, args ...inter
 	if c.UseMcUtils {
 		return c.ExecuteMcUtilPing(logger)
 	}
+  
+  if c.UseMcUtilsLegacy {
+    return c.ExecuteMcUtilPingLegacy(logger)
+  }
 
 	var options []mcpinger.McPingerOption
 	if c.Timeout > 0 {
@@ -151,7 +156,7 @@ func (c *statusCmd) ExecuteServerListPing() subcommands.ExitStatus {
 }
 
 func (c *statusCmd) ExecuteMcUtilPing(logger *zap.Logger) subcommands.ExitStatus {
-	client := ping.NewClient(c.Host, c.Port)
+  client := ping.NewClient(c.Host, c.Port)
 	client.DialTimeout = c.Timeout
 	client.ReadTimeout = c.Timeout
 
@@ -184,6 +189,53 @@ func (c *statusCmd) ExecuteMcUtilPing(logger *zap.Logger) subcommands.ExitStatus
 			fmt.Printf("%s:%d : version=%s online=%d max=%d motd='%s'\n",
 				c.Host, c.Port,
 				response.Version.Name, response.Players.Online, response.Players.Max, response.Description)
+		}
+
+		return nil
+	}, retry.Delay(c.RetryInterval), retry.Attempts(uint(c.RetryLimit+1)))
+
+	if err != nil {
+		_, _ = fmt.Fprintf(os.Stderr, "failed to ping %s:%d : %s", c.Host, c.Port, err)
+		return subcommands.ExitFailure
+	}
+
+	// regular output is within Do function
+	return subcommands.ExitSuccess
+}
+
+func (c *statusCmd) ExecuteMcUtilPingLegacy(logger *zap.Logger) subcommands.ExitStatus {
+	client := ping.NewClientLegacy(c.Host, c.Port)
+	client.DialTimeout = c.Timeout
+	client.ReadTimeout = c.Timeout
+
+	err := retry.Do(func() error {
+
+		err := client.Connect()
+		if err != nil {
+			logger.Debug("Client failed to connect", zap.Error(err))
+			return err
+		}
+
+		defer client.Disconnect()
+
+    info, latency, err := client.Ping()
+    if err != nil {
+      logger.Debug("Client failed to ping", zap.Error(err))
+      return err
+    }
+
+		logger.Debug("mcutils ping returned", zap.Int("latency", latency), zap.Any("info", info))
+
+		if info.MaxPlayers == 0 {
+			return errors.New("server not ready")
+		}
+
+		if c.ShowPlayerCount {
+			fmt.Printf("%d\n", info.OnlinePlayers)
+		} else {
+			fmt.Printf("%s:%d : version=%s online=%d max=%d motd='%s'\n",
+				c.Host, c.Port,
+				info.MinecraftVersion, info.OnlinePlayers, info.MaxPlayers, info.MOTD)
 		}
 
 		return nil

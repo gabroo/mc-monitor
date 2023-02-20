@@ -6,7 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"github.com/avast/retry-go"
-	"github.com/itzg/mc-monitor/slp"
+	"github.com/gabroo/mc-monitor/slp"
 	"go.uber.org/zap"
 	"log"
 	"os"

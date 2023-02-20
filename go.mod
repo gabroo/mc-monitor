@@ -1,4 +1,4 @@
-module github.com/itzg/mc-monitor
+module github.com/gabroo/mc-monitor
 
 go 1.17
 
